@@ -4,23 +4,19 @@
 #
 # Learn more at: https://juju.is/docs/sdk
 
-"""Charm the service.
-
-Refer to the following tutorial that will help you
-develop a new k8s charm using the Operator Framework:
-
-https://juju.is/docs/sdk/create-a-minimal-kubernetes-charm
-"""
-
+import subprocess
 import logging
 import os
+import shutil
 from typing import Any, Dict, List
 
 import ops
+from ops.main import main
+from ops.charm import CharmEvents
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from charms.grafana_agent.v0.cos_agent import COSAgentProvider
 from charms.operator_libs_linux.v0 import apt
-from charms.operator_libs_linux.v0.systemd import service_reload, service_restart, service_stop
+from charms.operator_libs_linux.v1.systemd import daemon_reload, service_restart, service_stop
 from jinja2 import Environment, FileSystemLoader, exceptions
 
 # Log messages can be retrieved using juju debug-log
@@ -30,8 +26,9 @@ VALID_LOG_LEVELS = ["info", "debug", "warning", "error", "critical"]
 
 
 METRICS_PORT = 8088
-TPCC_SCRIPT = "tpcc-script"
-SYSBENCH_SVC = "/etc/systemd/system/sysbench.service"
+TPCC_SCRIPT = "script"
+SYSBENCH_SVC = "sysbench"
+SYSBENCH_PATH = f"/etc/systemd/system/{SYSBENCH_SVC}.service"
 DATABASE_NAME = "sysbench-db"
 DATABASE_RELATION = "database"
 
@@ -46,7 +43,7 @@ def _render(src_template_file: str, dst_filepath: str, values: Dict[str, Any]):
         raise e
     # save the file in the destination
     with open(dst_filepath, "w") as f:
-        f.write(content.encode("UTF-8"))
+        f.write(content)
         os.chmod(dst_filepath, 0o640)
 
 
@@ -63,15 +60,18 @@ def _get_ip():
 class SysbenchPerfOperator(ops.CharmBase):
     """Charm the service."""
 
+    on = CharmEvents()
+
     def __init__(self, *args):
         super().__init__(*args)
         self.framework.observe(self.on.install, self._on_install)
         # self.framework.observe(self.on.config_changed, self._on_config_changed)
+        self.framework.observe(self.on.sysbench_run_action, self.on_benchmark_run_action)
+
+        self.database = DatabaseRequires(self, DATABASE_RELATION, DATABASE_NAME)
         self.framework.observe(
             getattr(self.database.on, "endpoints_changed"), self._on_endpoints_changed
         )
-
-        self.database = DatabaseRequires(self, DATABASE_RELATION, DATABASE_NAME)
         self.framework.observe(
             self.on[DATABASE_RELATION].relation_broken, self._on_relation_broken
         )
@@ -106,41 +106,51 @@ class SysbenchPerfOperator(ops.CharmBase):
             }
         ]
 
-    def on_install(self, _):
+    def _on_install(self, _):
         """Installs the basic packages and python dependencies.
 
         No exceptions are captured as we need all the dependencies below to even start running.
         """
         apt.update()
-        apt.add_package(["sysbench", "python3-prometheus-client", "python3-jinja2"])
+        apt.add_package(["sysbench", "python3-prometheus-client", "python3-jinja2", "unzip"])
+        shutil.copyfile("templates/sysbench_svc.py", "/usr/bin/sysbench_svc.py")
+        os.chmod("/usr/bin/sysbench_svc.py", 0o700)
 
     def on_benchmark_run_action(self, event):
         """Run benchmark action."""
         duration = event.params.get("duration", 0)
         # copy the tpcc file
         tpcc_filepath = self.model.resources.fetch(TPCC_SCRIPT)
-        os.copy(tpcc_filepath, "/opt/tpcc.lua")
-        db = self._database_config()
+        try:
+            subprocess.check_output(["unzip", "-o", "-j", tpcc_filepath, "-d", "/usr/share/sysbench/"])
+        except Exception as e:
+            raise e
+
+        if not os.path.exists("/usr/share/sysbench/tpcc.lua"):
+            raise Exception()
+
+        db = self._database_config
 
         # Render the systemd service file
         _render(
             "sysbench.service.j2",
-            SYSBENCH_SVC,
+            SYSBENCH_PATH,
             {
                 "db_driver": "mysql",
                 "threads": 8,
                 "tables": 10,
+                "scale": 10,
                 "db_name": DATABASE_NAME,
                 "db_user": db["user"],
                 "db_password": db["password"],
                 "db_host": db["host"],
                 "db_port": db["port"],
                 "duration": duration,
-                "extra-labels": ",".join([self.model.name, self.unit.name]),
+                "extra_labels": ",".join([self.model.name, self.unit.name]),
             },
         )
         # Reload and restart service now
-        service_reload(SYSBENCH_SVC)
+        daemon_reload()
         service_restart(SYSBENCH_SVC)
 
     def on_benchmark_stop_action(self, _):
@@ -178,3 +188,7 @@ class SysbenchPerfOperator(ops.CharmBase):
             config["port"] = port
 
         return config
+
+
+if __name__ == "__main__":
+    main(SysbenchPerfOperator)

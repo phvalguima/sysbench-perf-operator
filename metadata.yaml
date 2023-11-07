@@ -27,6 +27,7 @@ requires:
     limit: 1
 
 resources:
-  tpcc-script:
+  script:
     type: file
-    description: tpcc.lua
+    filename: script.zip
+    description: The tpcc scripts to be used in this test

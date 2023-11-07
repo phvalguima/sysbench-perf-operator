@@ -29,7 +29,7 @@ class SysbenchService:
         duration: int = 0,
     ):
         self.tpcc_script = tpcc_script
-        self.sysbench = f"sysbench {tpcc_script} --threads={threads} --tables={tables} --scale={scale} --force_pk=1 --db-driver={db_driver} --report_csv=no --time={duration}"
+        self.sysbench = f"/usr/bin/sysbench {tpcc_script} --threads={threads} --tables={tables} --scale={scale} --force_pk=1 --db-driver={db_driver}  --report-interval=10 --time={duration} "
         if db_driver == "mysql":
             self.sysbench += f"--mysql-db={db_name} --mysql-user={db_user} --mysql-password={db_password} --mysql-host={db_host} --mysql-port={db_port}"
         else:
@@ -43,10 +43,15 @@ class SysbenchService:
         return self._exec(["prepare"])
 
     def _process_line(self, line):
+        if "tps" not in line or "qps" not in line or "lat" not in line:
+            # This line does not have any data of interest
+            return None
         return {
             "tps": line.split("tps: ")[1].split()[0],
             "qps": line.split("qps: ")[1].split()[0],
-            "95p_latency": line.split("blabla: ")[1].split()[0],
+            "95p_latency": line.split("lat (ms,95%): ")[1].split()[0],
+            "err-per-sec": line.split("err/s: ")[1].split()[0],
+            "reconn-per-sec": line.split("reconn/s: ")[1]
         }
 
     def run(self, proc, metrics, label, extra_labels):
@@ -59,6 +64,8 @@ class SysbenchService:
             raise Exception(f"Error generated: {errs}")
         for line in outs.split("\n"):
             value = self._process_line(line)
+            if not value:
+                continue
             for m in ["tps", "qps", "95p_latency"]:
                 self.add_benchmark_metric(
                     metrics, f"{label}_{m}", extra_labels, f"tpcc metrics for {m}", value[m]
@@ -91,31 +98,42 @@ def main(args):
     def _exit():
         keep_running = False  # noqa: F841
 
-    svc = SysbenchService(*args)
+    svc = SysbenchService(
+        tpcc_script=args.tpcc_script,
+        db_driver=args.db_driver,
+        threads=args.threads,
+        tables=args.tables,
+        scale=args.scale,
+        db_name=args.db_name,
+        db_user=args.db_user,
+        db_password=args.db_password,
+        db_host=args.db_host,
+        db_port=args.db_port,
+        duration=args.duration
+    )
 
     signal.signal(signal.SIGINT, _exit)
     signal.signal(signal.SIGTERM, _exit)
     start_http_server(8088)
 
-    proc = subprocess.Popen(
-        svc.sysbench.split(" ") + ["run"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    metrics = {}
-
-    while keep_running:
-        if args.command == "prepare":
-            svc.prepare()
-            keep_running = False  # Gracefully shutdown
-        elif args.command == "run":
+    if args.command == "prepare":
+        svc.prepare()
+        keep_running = False  # Gracefully shutdown
+    elif args.command == "run":
+        proc = subprocess.Popen(
+            svc.sysbench.split(" ") + ["run"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        metrics = {}
+        while keep_running:
             svc.run(proc, metrics, f"tpcc_{args.db_driver}", args.extra_labels)
-        elif args.command == "clean":
-            svc.clean()
-        else:
-            raise Exception(f"Command option {args.command} not known")
+    elif args.command == "clean":
+        svc.clean()
+    else:
+        raise Exception(f"Command option {args.command} not known")
 
 
 if __name__ == "__main__":
@@ -128,6 +146,7 @@ if __name__ == "__main__":
     parser.add_argument("--tables", type=int, default=10)
     parser.add_argument("--scale", type=int, default=10)
     parser.add_argument("--db_name", type=str)
+    parser.add_argument("--db_user", type=str)
     parser.add_argument("--db_password", type=str)
     parser.add_argument("--db_host", type=str)
     parser.add_argument("--db_port", type=int)
