@@ -29,7 +29,7 @@ class SysbenchService:
         duration: int = 0,
     ):
         self.tpcc_script = tpcc_script
-        self.sysbench = f"/usr/bin/sysbench {tpcc_script} --threads={threads} --tables={tables} --scale={scale} --force_pk=1 --db-driver={db_driver}  --report-interval=10 --time={duration} "
+        self.sysbench = f"/usr/bin/sysbench {tpcc_script} --threads={threads} --tables={tables} --scale={scale} --force_pk=1 --db-driver={db_driver} --report-interval=10 --time={duration} "
         if db_driver == "mysql":
             self.sysbench += f"--mysql-db={db_name} --mysql-user={db_user} --mysql-password={db_password} --mysql-host={db_host} --mysql-port={db_port}"
         else:
