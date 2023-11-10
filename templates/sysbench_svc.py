@@ -36,7 +36,7 @@ class SysbenchService:
             raise Exception("Wrong db driver chosen")
 
     def _exec(self, cmd):
-        subprocess.check_output(self.sysbench.split(" ") + cmd)
+        subprocess.check_output(self.sysbench.split(" ") + cmd, timeout=86400)
 
     def prepare(self):
         """Prepare the sysbench output."""
@@ -50,24 +50,18 @@ class SysbenchService:
             "tps": line.split("tps: ")[1].split()[0],
             "qps": line.split("qps: ")[1].split()[0],
             "95p_latency": line.split("lat (ms,95%): ")[1].split()[0],
-            "err-per-sec": line.split("err/s: ")[1].split()[0],
+            "err-per-sec": line.split("err/s ")[1].split()[0],
             "reconn-per-sec": line.split("reconn/s: ")[1]
         }
 
     def run(self, proc, metrics, label, extra_labels):
         """Run one step of the main sysbench service loop."""
-        try:
-            outs, errs = proc.communicate(timeout=20)
-        except subprocess.TimeoutExpired:
-            raise Exception("Timed out waiting for sysbench.")
-        if errs:
-            raise Exception(f"Error generated: {errs}")
-        for line in outs.split("\n"):
+        for line in iter(proc.stdout.readline, ""):
             value = self._process_line(line)
             if not value:
                 continue
             for m in ["tps", "qps", "95p_latency"]:
-                self.add_benchmark_metric(
+                add_benchmark_metric(
                     metrics, f"{label}_{m}", extra_labels, f"tpcc metrics for {m}", value[m]
                 )
 
@@ -125,11 +119,11 @@ def main(args):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True
         )
         metrics = {}
         while keep_running:
-            svc.run(proc, metrics, f"tpcc_{args.db_driver}", args.extra_labels)
+            svc.run(proc, metrics, f"tpcc_{args.db_driver}", args.extra_labels.split(","))
     elif args.command == "clean":
         svc.clean()
     else:

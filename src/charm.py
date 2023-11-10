@@ -11,6 +11,10 @@ import shutil
 from typing import Any, Dict, List
 
 import ops
+from ops.framework import (
+    EventBase,
+    EventSource
+)
 from ops.main import main
 from ops.charm import CharmEvents
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
@@ -30,7 +34,9 @@ TPCC_SCRIPT = "script"
 SYSBENCH_SVC = "sysbench"
 SYSBENCH_PATH = f"/etc/systemd/system/{SYSBENCH_SVC}.service"
 DATABASE_NAME = "sysbench-db"
+
 DATABASE_RELATION = "database"
+COS_AGENT_RELATION = "cos-agent"
 
 
 def _render(src_template_file: str, dst_filepath: str, values: Dict[str, Any]):
@@ -47,26 +53,27 @@ def _render(src_template_file: str, dst_filepath: str, values: Dict[str, Any]):
         os.chmod(dst_filepath, 0o640)
 
 
-def _get_ip():
-    """Read files to quickly figure out its own IP. It should work for any Ubuntu-based image."""
-    with open("/etc/hosts") as f:
-        hosts = f.read()
-    with open("/etc/hostname") as f:
-        hostname = f.read().replace("\n", "")
-    line = [ln for ln in hosts.split("\n") if ln.find(hostname) >= 0][0]
-    return line.split("\t")[0]
+class SetupBenchmarkEvent(EventBase):
+    pass
+
+
+class SetupBenchmarkEvents(CharmEvents):
+    """Restart charm events."""
+
+    setup_benchmark_event = EventSource(SetupBenchmarkEvent)
 
 
 class SysbenchPerfOperator(ops.CharmBase):
     """Charm the service."""
 
-    on = CharmEvents()
+    on = SetupBenchmarkEvents()
 
     def __init__(self, *args):
         super().__init__(*args)
         self.framework.observe(self.on.install, self._on_install)
         # self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.sysbench_run_action, self.on_benchmark_run_action)
+        self.framework.observe(self.on.setup_benchmark_event, self.setup_benchmark)
 
         self.database = DatabaseRequires(self, DATABASE_RELATION, DATABASE_NAME)
         self.framework.observe(
@@ -90,7 +97,7 @@ class SysbenchPerfOperator(ops.CharmBase):
     @property
     def _unit_ip(self) -> str:
         """Current unit ip."""
-        return _get_ip()
+        return self.model.get_binding(COS_AGENT_RELATION).network.bind_address
 
     def _on_relation_broken(self, _):
         service_stop(SYSBENCH_SVC)
@@ -118,7 +125,7 @@ class SysbenchPerfOperator(ops.CharmBase):
 
     def on_benchmark_run_action(self, event):
         """Run benchmark action."""
-        duration = event.params.get("duration", 0)
+        self.duration = event.params.get("duration", 0)
         # copy the tpcc file
         tpcc_filepath = self.model.resources.fetch(TPCC_SCRIPT)
         try:
@@ -128,8 +135,51 @@ class SysbenchPerfOperator(ops.CharmBase):
 
         if not os.path.exists("/usr/share/sysbench/tpcc.lua"):
             raise Exception()
+        self.on.setup_benchmark_event.emit()
+
+    def setup_benchmark(self, _):
 
         db = self._database_config
+
+        _extra_labels = ",".join([self.model.name, self.unit.name])
+
+        try:
+            # Attempt clean up
+            subprocess.check_output([
+                "/usr/bin/sysbench_svc.py",
+                "--tpcc_script=/usr/share/sysbench/tpcc.lua",
+                "--db_driver=mysql",
+                f"--threads={self.charm.config['threads']}",
+                f"--tables={self.charm.config['tables']}",
+                f"--scale={self.charm.config['scale']}",
+                f"--db_name={DATABASE_NAME}",
+                f"--db_user={db['user']}",
+                f"--db_password={db['password']}",
+                f"--db_host={db['host']}",
+                f"--db_port={db['port']}",
+                f"--duration={self.duration}",
+                "--command=clean",
+                f"--extra_labels={_extra_labels}",
+            ], timeout=86400)
+        except Exception:
+            pass
+
+        subprocess.check_output([
+            "/usr/bin/sysbench_svc.py",
+            "--tpcc_script=/usr/share/sysbench/tpcc.lua",
+            "--db_driver=mysql",
+            f"--threads={self.charm.config['threads']}",
+            f"--tables={self.charm.config['tables']}",
+            f"--scale={self.charm.config['scale']}",
+            f"--db_name={DATABASE_NAME}",
+            f"--db_user={db['user']}",
+            f"--db_password={db['password']}",
+            f"--db_host={db['host']}",
+            f"--db_port={db['port']}",
+            f"--duration={self.duration}",
+            "--command=prepare",
+            f"--extra_labels={_extra_labels}",
+        ], timeout=86400)
 
         # Render the systemd service file
         _render(
@@ -137,21 +187,23 @@ class SysbenchPerfOperator(ops.CharmBase):
             SYSBENCH_PATH,
             {
                 "db_driver": "mysql",
-                "threads": 8,
-                "tables": 10,
-                "scale": 10,
+                "threads": self.charm.config["threads"],
+                "tables": self.charm.config["tables"],
+                "scale": self.charm.config["scale"],
                 "db_name": DATABASE_NAME,
                 "db_user": db["user"],
                 "db_password": db["password"],
                 "db_host": db["host"],
                 "db_port": db["port"],
-                "duration": duration,
-                "extra_labels": ",".join([self.model.name, self.unit.name]),
+                "duration": self.duration,
+                "extra_labels": _extra_labels,
             },
         )
         # Reload and restart service now
         daemon_reload()
         service_restart(SYSBENCH_SVC)
+
+        # TODO: ExecStop=/usr/bin/sysbench_svc.py --tpcc_script=/usr/share/sysbench/tpcc.lua --db_driver={{ db_driver }} --threads={{ threads }} --tables={{ tables }} --scale={{ scale }} --db_name={{ db_name }} --db_user={{ db_user }} --db_password={{ db_password }} --db_host={{ db_host }} --db_port={{ db_port }} --duration={{ duration }} --command=clean --extra_labels={{ extra_labels }} --duration={{ duration }}
 
     def on_benchmark_stop_action(self, _):
         """Stop benchmark service."""
