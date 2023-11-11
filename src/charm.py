@@ -20,7 +20,7 @@ from ops.charm import CharmEvents
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from charms.grafana_agent.v0.cos_agent import COSAgentProvider
 from charms.operator_libs_linux.v0 import apt
-from charms.operator_libs_linux.v1.systemd import daemon_reload, service_restart, service_stop
+from charms.operator_libs_linux.v1.systemd import daemon_reload, service_restart, service_stop, service_running
 from jinja2 import Environment, FileSystemLoader, exceptions
 
 # Log messages can be retrieved using juju debug-log
@@ -71,7 +71,7 @@ class SysbenchPerfOperator(ops.CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
         self.framework.observe(self.on.install, self._on_install)
-        # self.framework.observe(self.on.config_changed, self._on_config_changed)
+        self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.sysbench_run_action, self.on_benchmark_run_action)
         self.framework.observe(self.on.setup_benchmark_event, self.setup_benchmark)
 
@@ -84,7 +84,6 @@ class SysbenchPerfOperator(ops.CharmBase):
         )
         self._grafana_agent = COSAgentProvider(
             self,
-            metrics_endpoints=[{"path": "/metrics", "port": METRICS_PORT}],
             scrape_configs=self.scrape_config,
             refresh_events=[],
         )
@@ -98,6 +97,10 @@ class SysbenchPerfOperator(ops.CharmBase):
     def _unit_ip(self) -> str:
         """Current unit ip."""
         return self.model.get_binding(COS_AGENT_RELATION).network.bind_address
+
+    def _on_config_changed(self, _):
+        # For now, ignore the configuration
+        pass
 
     def _on_relation_broken(self, _):
         service_stop(SYSBENCH_SVC)
@@ -137,7 +140,14 @@ class SysbenchPerfOperator(ops.CharmBase):
             raise Exception()
         self.on.setup_benchmark_event.emit()
 
-    def setup_benchmark(self, _):
+    def setup_benchmark(self, event):
+        if "actions" in os.environ.get("JUJU_DISPATCH_PATH", ""):
+            # This is a long-running step, delay to not happen at the same time as an action
+            event.defer()
+            return
+
+        if service_running(SYSBENCH_SVC):
+            service_stop(SYSBENCH_SVC)
 
         db = self._database_config
 
@@ -149,15 +159,15 @@ class SysbenchPerfOperator(ops.CharmBase):
                 "/usr/bin/sysbench_svc.py",
                 "--tpcc_script=/usr/share/sysbench/tpcc.lua",
                 "--db_driver=mysql",
-                f"--threads={self.charm.config['threads']}",
-                f"--tables={self.charm.config['tables']}",
-                f"--scale={self.charm.config['scale']}",
+                f"--threads={self.config['threads']}",
+                f"--tables={self.config['tables']}",
+                f"--scale={self.config['scale']}",
                 f"--db_name={DATABASE_NAME}",
                 f"--db_user={db['user']}",
                 f"--db_password={db['password']}",
                 f"--db_host={db['host']}",
                 f"--db_port={db['port']}",
-                f"--duration={self.duration}",
+                f"--duration={self.config['duration']}",
                 "--command=clean",
                 f"--extra_labels={_extra_labels}",
             ], timeout=86400)
@@ -168,15 +178,15 @@ class SysbenchPerfOperator(ops.CharmBase):
             "/usr/bin/sysbench_svc.py",
             "--tpcc_script=/usr/share/sysbench/tpcc.lua",
             "--db_driver=mysql",
-            f"--threads={self.charm.config['threads']}",
-            f"--tables={self.charm.config['tables']}",
-            f"--scale={self.charm.config['scale']}",
+            f"--threads={self.config['threads']}",
+            f"--tables={self.config['tables']}",
+            f"--scale={self.config['scale']}",
             f"--db_name={DATABASE_NAME}",
             f"--db_user={db['user']}",
             f"--db_password={db['password']}",
             f"--db_host={db['host']}",
             f"--db_port={db['port']}",
-            f"--duration={self.duration}",
+            f"--duration={self.config['duration']}",
             "--command=prepare",
             f"--extra_labels={_extra_labels}",
         ], timeout=86400)
@@ -187,23 +197,21 @@ class SysbenchPerfOperator(ops.CharmBase):
             SYSBENCH_PATH,
             {
                 "db_driver": "mysql",
-                "threads": self.charm.config["threads"],
-                "tables": self.charm.config["tables"],
-                "scale": self.charm.config["scale"],
+                "threads": self.config["threads"],
+                "tables": self.config["tables"],
+                "scale": self.config["scale"],
                 "db_name": DATABASE_NAME,
                 "db_user": db["user"],
                 "db_password": db["password"],
                 "db_host": db["host"],
                 "db_port": db["port"],
-                "duration": self.duration,
+                "duration": self.config["duration"],
                 "extra_labels": _extra_labels,
             },
         )
         # Reload and restart service now
         daemon_reload()
         service_restart(SYSBENCH_SVC)
-
-        # TODO: ExecStop=/usr/bin/sysbench_svc.py --tpcc_script=/usr/share/sysbench/tpcc.lua --db_driver={{ db_driver }} --threads={{ threads }} --tables={{ tables }} --scale={{ scale }} --db_name={{ db_name }} --db_user={{ db_user }} --db_password={{ db_password }} --db_host={{ db_host }} --db_port={{ db_port }} --duration={{ duration }} --command=clean --extra_labels={{ extra_labels }} --duration={{ duration }}
 
     def on_benchmark_stop_action(self, _):
         """Stop benchmark service."""

@@ -14,3 +14,8 @@ options:
     type: int
     description: |
       Number of tables involved in the testing.
+  duration:
+    default: 0
+    type: int
+    description: |
+      Duration of the test, if set to 0, it does not stop.
