@@ -51,7 +51,7 @@ class SysbenchService:
             "qps": line.split("qps: ")[1].split()[0],
             "95p_latency": line.split("lat (ms,95%): ")[1].split()[0],
             "err-per-sec": line.split("err/s ")[1].split()[0],
-            "reconn-per-sec": line.split("reconn/s: ")[1]
+            "reconn-per-sec": line.split("reconn/s: ")[1],
         }
 
     def run(self, proc, metrics, label, extra_labels):
@@ -103,7 +103,7 @@ def main(args):
         db_password=args.db_password,
         db_host=args.db_host,
         db_port=args.db_port,
-        duration=args.duration
+        duration=args.duration,
     )
 
     signal.signal(signal.SIGINT, _exit)
@@ -119,7 +119,7 @@ def main(args):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            universal_newlines=True,
         )
         metrics = {}
         while keep_running:

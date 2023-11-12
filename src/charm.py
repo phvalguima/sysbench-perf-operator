@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
 # Copyright 2023 pguimaraes
 # See LICENSE file for licensing details.
-#
-# Learn more at: https://juju.is/docs/sdk
 
-import subprocess
+"""This class manages the sysbench systemd service."""
+
 import logging
 import os
 import shutil
+import subprocess
 from typing import Any, Dict, List
 
 import ops
-from ops.framework import (
-    EventBase,
-    EventSource
-)
-from ops.main import main
-from ops.charm import CharmEvents
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from charms.grafana_agent.v0.cos_agent import COSAgentProvider
 from charms.operator_libs_linux.v0 import apt
-from charms.operator_libs_linux.v1.systemd import daemon_reload, service_restart, service_stop, service_running
+from charms.operator_libs_linux.v1.systemd import (
+    daemon_reload,
+    service_restart,
+    service_running,
+    service_stop,
+)
 from jinja2 import Environment, FileSystemLoader, exceptions
+from ops.charm import CharmEvents
+from ops.framework import EventBase, EventSource
+from ops.main import main
 
 # Log messages can be retrieved using juju debug-log
 logger = logging.getLogger(__name__)
@@ -54,6 +56,8 @@ def _render(src_template_file: str, dst_filepath: str, values: Dict[str, Any]):
 
 
 class SetupBenchmarkEvent(EventBase):
+    """Setup benchmark event."""
+
     pass
 
 
@@ -87,6 +91,21 @@ class SysbenchPerfOperator(ops.CharmBase):
             scrape_configs=self.scrape_config,
             refresh_events=[],
         )
+
+    def __del__(self):
+        """Set status for the operator and finishes the service."""
+        self.unit.status = self.status()
+        super().__del__()
+
+    def status(self):
+        """Return the status of the service."""
+        if not self.database.fetch_relation_data():
+            return ops.model.BlockedStatus("Database is not ready")
+        if not self.model.relations.get(COS_AGENT_RELATION):
+            return ops.model.BlockedStatus("Grafana agent is not ready")
+        if not service_running(SYSBENCH_SVC):
+            return ops.model.WaitingStatus("Waiting for benchmark action to run")
+        return ops.model.ActiveStatus()
 
     @property
     def is_tls_enabled(self):
@@ -132,7 +151,9 @@ class SysbenchPerfOperator(ops.CharmBase):
         # copy the tpcc file
         tpcc_filepath = self.model.resources.fetch(TPCC_SCRIPT)
         try:
-            subprocess.check_output(["unzip", "-o", "-j", tpcc_filepath, "-d", "/usr/share/sysbench/"])
+            subprocess.check_output(
+                ["unzip", "-o", "-j", tpcc_filepath, "-d", "/usr/share/sysbench/"]
+            )
         except Exception as e:
             raise e
 
@@ -141,10 +162,13 @@ class SysbenchPerfOperator(ops.CharmBase):
         self.on.setup_benchmark_event.emit()
 
     def setup_benchmark(self, event):
+        """Set up benchmark systemd service."""
         if "actions" in os.environ.get("JUJU_DISPATCH_PATH", ""):
             # This is a long-running step, delay to not happen at the same time as an action
             event.defer()
             return
+
+        self.unit.status = ops.model.MaintenanceStatus("Setting up benchmark")
 
         if service_running(SYSBENCH_SVC):
             service_stop(SYSBENCH_SVC)
@@ -155,7 +179,31 @@ class SysbenchPerfOperator(ops.CharmBase):
 
         try:
             # Attempt clean up
-            subprocess.check_output([
+            subprocess.check_output(
+                [
+                    "/usr/bin/sysbench_svc.py",
+                    "--tpcc_script=/usr/share/sysbench/tpcc.lua",
+                    "--db_driver=mysql",
+                    f"--threads={self.config['threads']}",
+                    f"--tables={self.config['tables']}",
+                    f"--scale={self.config['scale']}",
+                    f"--db_name={DATABASE_NAME}",
+                    f"--db_user={db['user']}",
+                    f"--db_password={db['password']}",
+                    f"--db_host={db['host']}",
+                    f"--db_port={db['port']}",
+                    f"--duration={self.config['duration']}",
+                    "--command=clean",
+                    f"--extra_labels={_extra_labels}",
+                ],
+                timeout=86400,
+            )
+        except Exception:
+            pass
+        self.unit.status = ops.model.MaintenanceStatus("Running prepare command...")
+
+        subprocess.check_output(
+            [
                 "/usr/bin/sysbench_svc.py",
                 "--tpcc_script=/usr/share/sysbench/tpcc.lua",
                 "--db_driver=mysql",
@@ -168,28 +216,11 @@ class SysbenchPerfOperator(ops.CharmBase):
                 f"--db_host={db['host']}",
                 f"--db_port={db['port']}",
                 f"--duration={self.config['duration']}",
-                "--command=clean",
+                "--command=prepare",
                 f"--extra_labels={_extra_labels}",
-            ], timeout=86400)
-        except Exception:
-            pass
-
-        subprocess.check_output([
-            "/usr/bin/sysbench_svc.py",
-            "--tpcc_script=/usr/share/sysbench/tpcc.lua",
-            "--db_driver=mysql",
-            f"--threads={self.config['threads']}",
-            f"--tables={self.config['tables']}",
-            f"--scale={self.config['scale']}",
-            f"--db_name={DATABASE_NAME}",
-            f"--db_user={db['user']}",
-            f"--db_password={db['password']}",
-            f"--db_host={db['host']}",
-            f"--db_port={db['port']}",
-            f"--duration={self.config['duration']}",
-            "--command=prepare",
-            f"--extra_labels={_extra_labels}",
-        ], timeout=86400)
+            ],
+            timeout=86400,
+        )
 
         # Render the systemd service file
         _render(
@@ -212,6 +243,7 @@ class SysbenchPerfOperator(ops.CharmBase):
         # Reload and restart service now
         daemon_reload()
         service_restart(SYSBENCH_SVC)
+        self.unit.status = ops.model.ActiveStatus("Sysbench service is running")
 
     def on_benchmark_stop_action(self, _):
         """Stop benchmark service."""
