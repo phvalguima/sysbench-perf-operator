@@ -95,7 +95,6 @@ class SysbenchPerfOperator(ops.CharmBase):
     def __del__(self):
         """Set status for the operator and finishes the service."""
         self.unit.status = self.status()
-        super().__del__()
 
     def status(self):
         """Return the status of the service."""

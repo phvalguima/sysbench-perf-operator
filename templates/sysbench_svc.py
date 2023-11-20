@@ -89,7 +89,7 @@ def main(args):
     """Run main method."""
     keep_running = True
 
-    def _exit():
+    def _exit(*args, **kwargs):
         keep_running = False  # noqa: F841
 
     svc = SysbenchService(
