@@ -1,26 +1,42 @@
-<!--
-Avoid using this README file for information that is maintained or published elsewhere, e.g.:
-
-* metadata.yaml > published on Charmhub
-* documentation > published on (or linked to from) Charmhub
-* detailed contribution guide > documentation or CONTRIBUTING.md
-
-Use links instead.
--->
+Connect your database to sysbench and run a benchmark.
 
 # sysbench-perf-operator
 
-Charmhub package name: operator-template
-More information: https://charmhub.io/sysbench-perf-operator
+Connect your database to sysbench and run a benchmark.
 
-Describe your charm in one or two sentences.
+## Getting started
 
-## Other resources
+To start your testing, run the following steps:
+1) relate sysbench-perf-operator to the target database
+2) upload a test script (TPCC format)
+3) Execute it with `juju run <sysbench-app> sysbench-run`
 
-<!-- If your charm is documented somewhere else other than Charmhub, provide a link separately. -->
+### Uploading test scripts
 
-- [Read more](https://example.com)
+Sysbench has a set of tests that are native, but its most
+interesting feature is its extensibility using LUA scripts.
 
-- [Contributing](CONTRIBUTING.md) <!-- or link to other contribution documentation -->
+Upload your favorite scripts as `juju resources` to the
+application. For each unit, run:
 
-- See the [Juju SDK documentation](https://juju.is/docs/sdk) for more information about developing and improving charms.
+```
+juju attach-resource sysbench-perf-operator/0 script=<path to zip file>
+```
+
+The charm expects a ZIP file containing the script.
+
+## Monitoring
+
+The sysbench-perf-operator supports COS integration.
+
+For that, it is enough to relate this charm to `grafana-agent`.
+The charm will open a scrape endpoint for Prometheus to collect
+metrics.
+
+# Supported Databases
+
+Currently supports: MySQL
+
+# TODOs
+
+* Develop a grafana dashboard
