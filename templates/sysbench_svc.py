@@ -7,8 +7,12 @@
 import argparse
 import signal
 import subprocess
+import logging
 
 from prometheus_client import Gauge, start_http_server
+
+
+logger = logging.getLogger(__name__)
 
 
 class SysbenchService:
@@ -108,6 +112,8 @@ def main(args):
 
     signal.signal(signal.SIGINT, _exit)
     signal.signal(signal.SIGTERM, _exit)
+    # Collects the status if the child process ends
+    signal.signal(signal.SIGCHLD, _exit)
     start_http_server(8088)
 
     if args.command == "prepare":
@@ -124,6 +130,7 @@ def main(args):
         metrics = {}
         while keep_running:
             svc.run(proc, metrics, f"tpcc_{args.db_driver}", args.extra_labels.split(","))
+        svc.stop(proc)
     elif args.command == "clean":
         svc.clean()
     else:
