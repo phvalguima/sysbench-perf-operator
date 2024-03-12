@@ -19,7 +19,7 @@ import logging
 import os
 import shutil
 import subprocess
-from typing import Any, Dict, List
+from typing import Dict, List
 
 import ops
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
@@ -34,57 +34,16 @@ from constants import (
     LUA_SCRIPT_PATH,
     METRICS_PORT,
     PEER_RELATION,
-    SysbenchBaseDatabaseModel,
     SysbenchExecStatusEnum,
-    SysbenchExecutionModel,
     SysbenchIsInWrongStateError,
 )
-from sysbench import SysbenchService, SysbenchStatus
+from sysbench import SysbenchOptionsFactory, SysbenchService, SysbenchStatus
 
 # Log messages can be retrieved using juju debug-log
 logger = logging.getLogger(__name__)
 
 
-class SysbenchOptionsFactory:
-    """Renders the database options and abstracts the main charm from the db type details.
-
-    It uses the data coming from both relation and config.
-    """
-
-    def __init__(self, relation_data: Dict[str, Any], config: Dict[str, Any]):
-        self.relation_data = relation_data
-        self.config = config
-
-    def get_database_options(self) -> Dict[str, Any]:
-        """Returns the database options."""
-        endpoints = list(self.relation_data.values())[0].get("endpoints")
-
-        unix_socket, host, port = None, None, None
-        if endpoints.startswith("file://"):
-            unix_socket = endpoints[7:]
-        else:
-            host, port = endpoints.split(":")
-
-        return SysbenchBaseDatabaseModel(
-            host=host,
-            port=port,
-            unix_socket=unix_socket,
-            user=self.relation_data.get("username"),
-            password=self.relation_data.get("password"),
-            tables=self.config.get("tables"),
-            scale=self.config.get("scale"),
-        )
-
-    def get_execution_options(self) -> Dict[str, Any]:
-        """Returns the execution options."""
-        return SysbenchExecutionModel(
-            threads=self.config.get("threads"),
-            duration=self.config.get("duration"),
-            db_info=self.get_database_options(),
-        )
-
-
-class SysbenchPerfOperator(ops.CharmBase):
+class SysbenchOperator(ops.CharmBase):
     """Charm the service."""
 
     def __init__(self, *args):
@@ -131,7 +90,7 @@ class SysbenchPerfOperator(ops.CharmBase):
 
     def __del__(self):
         """Set status for the operator and finishes the service."""
-        self.unit.status = self._set_charm_status()
+        self._set_charm_status()
 
     @property
     def is_tls_enabled(self):
@@ -172,15 +131,17 @@ class SysbenchPerfOperator(ops.CharmBase):
 
         No exceptions are captured as we need all the dependencies below to even start running.
         """
+        self.unit.status = ops.model.MaintenanceStatus("Installing...")
         apt.update()
         apt.add_package(["sysbench", "python3-prometheus-client", "python3-jinja2", "unzip"])
         shutil.copyfile("templates/sysbench_svc.py", "/usr/bin/sysbench_svc.py")
         os.chmod("/usr/bin/sysbench_svc.py", 0o700)
+        self.unit.status = ops.model.ActiveStatus()
 
     def _on_peer_changed(self, _):
         """Peer relation changed."""
         if (
-            not self.is_leader()
+            not self.unit.is_leader()
             and self.sysbench_status.app_status() == SysbenchExecStatusEnum.PREPARED
             and self.sysbench_status.service_status()
             not in [SysbenchExecStatusEnum.PREPARED, SysbenchExecStatusEnum.RUNNING]
@@ -192,7 +153,7 @@ class SysbenchPerfOperator(ops.CharmBase):
         self, extra_labels, command: str, driver: str, script: str = LUA_SCRIPT_PATH
     ):
         """Execute the sysbench command."""
-        db = SysbenchOptionsFactory()
+        db = SysbenchOptionsFactory(self, DATABASE_RELATION).get_execution_options()
         output = subprocess.check_output(
             [
                 "/usr/bin/sysbench_svc.py",
@@ -231,7 +192,7 @@ class SysbenchPerfOperator(ops.CharmBase):
         There are two steps: the actual prepare command and setting a target to inform the
         prepare was successful.
         """
-        if not self.is_leader():
+        if not self.unit.is_leader():
             event.fail("Failed: only leader can prepare the database")
             return
         if not (status := self.check()):
@@ -239,7 +200,7 @@ class SysbenchPerfOperator(ops.CharmBase):
                 f"Failed: app level reports {self.sysbench_status.app_status()} and service level reports {self.sysbench_status.service_status()}"
             )
             return
-        if not status != SysbenchExecStatusEnum.UNSET:
+        if status != SysbenchExecStatusEnum.UNSET:
             event.fail("Failed: sysbench is already prepared, stop and clean up the cluster first")
 
         script = self.config["script"]
@@ -292,7 +253,7 @@ class SysbenchPerfOperator(ops.CharmBase):
 
     def on_clean_action(self, event):
         """Clean the database."""
-        if not self.is_leader():
+        if not self.unit.is_leader():
             event.fail("Failed: only leader can prepare the database")
             return
         if not (status := self.check()):
@@ -322,4 +283,4 @@ class SysbenchPerfOperator(ops.CharmBase):
 
 
 if __name__ == "__main__":
-    main(SysbenchPerfOperator)
+    main(SysbenchOperator)

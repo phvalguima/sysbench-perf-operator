@@ -3,6 +3,7 @@
 
 """This module contains the sysbench service and status classes."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -21,6 +22,7 @@ from jinja2 import Environment, FileSystemLoader, exceptions
 from constants import (
     SYSBENCH_SVC,
     SYSBENCH_SVC_READY_TARGET,
+    SysbenchBaseDatabaseModel,
     SysbenchExecStatusEnum,
     SysbenchExecutionModel,
     SysbenchIsInWrongStateError,
@@ -140,6 +142,7 @@ class SysbenchStatus:
         self.svc = svc
         self.relation = relation
 
+    @property
     def _relation(self) -> Dict[str, Any]:
         return self.charm.model.get_relation(self.relation)
 
@@ -163,9 +166,9 @@ class SysbenchStatus:
         """Sets the status in the relation."""
         if not self._relation:
             return
-        if self.charm.is_leader():
-            self._relation.data[self.charm.app]["status"] = status
-        self._relation.data[self.charm.unit]["status"] = status
+        if self.charm.unit.is_leader():
+            self._relation.data[self.charm.app]["status"] = status.value
+        self._relation.data[self.charm.unit]["status"] = status.value
 
     def _has_error_happened(self) -> bool:
         for unit in self._relation.units:
@@ -202,7 +205,7 @@ class SysbenchStatus:
         if self._has_error_happened():
             return SysbenchExecStatusEnum.ERROR
 
-        if self.charm.is_leader():
+        if self.charm.unit.is_leader():
             # Either we are waiting for PREPARE to happen, or it has happened, as
             # the prepare command runs synchronously with the charm. Check if the
             # target exists:
@@ -215,3 +218,51 @@ class SysbenchStatus:
         if self.service_status() != self.app_status():
             raise SysbenchIsInWrongStateError(self.service_status(), self.app_status())
         return self.service_status()
+
+
+class SysbenchOptionsFactory(ops.Object):
+    """Renders the database options and abstracts the main charm from the db type details.
+
+    It uses the data coming from both relation and config.
+    """
+
+    def __init__(self, charm, relation_name):
+        super().__init__(charm, relation_name)
+        self.charm = charm
+        self.relation_name = relation_name
+
+    @property
+    def relation_data(self):
+        """Returns the relation data."""
+        return self.charm.model.get_relation(self.relation_name).data
+
+    def get_database_options(self) -> Dict[str, Any]:
+        """Returns the database options."""
+        raw = json.loads(self.relation_data[self.charm.unit]["data"])
+        endpoints = raw.get("endpoints")
+        credentials = self.framework.model.get_secret(id=raw.get("secret-user")).get_content()
+
+        unix_socket, host, port = None, None, None
+        if endpoints.startswith("file://"):
+            unix_socket = endpoints[7:]
+        else:
+            host, port = endpoints.split(":")
+
+        return SysbenchBaseDatabaseModel(
+            host=host,
+            port=int(port),
+            unix_socket=unix_socket,
+            username=credentials.get("username"),
+            password=credentials.get("password"),
+            db_name=raw.get("database"),
+            tables=self.charm.config.get("tables"),
+            scale=self.charm.config.get("scale"),
+        )
+
+    def get_execution_options(self) -> Dict[str, Any]:
+        """Returns the execution options."""
+        return SysbenchExecutionModel(
+            threads=self.charm.config.get("threads"),
+            duration=self.charm.config.get("duration"),
+            db_info=self.get_database_options(),
+        )

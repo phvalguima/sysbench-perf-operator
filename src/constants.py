@@ -4,6 +4,7 @@
 """This module contains the constants and models used by the sysbench charm."""
 
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, root_validator
 
@@ -42,9 +43,9 @@ class SysbenchBaseDatabaseModel(BaseModel):
     Holds all the details of the sysbench database.
     """
 
-    host: str
-    port: int
-    unix_socket: str
+    host: Optional[str]
+    port: Optional[int]
+    unix_socket: Optional[str]
     username: str
     password: str
     db_name: str
