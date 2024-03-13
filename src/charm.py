@@ -275,6 +275,7 @@ class SysbenchOperator(ops.CharmBase):
         svc = SysbenchService()
         svc.stop()
         self._execute_sysbench_cmd(self.labels, "clean", driver)
+        svc.unset()
         self.sysbench_status.set(SysbenchExecStatusEnum.UNSET)
 
     def _on_endpoints_changed(self, _) -> None:

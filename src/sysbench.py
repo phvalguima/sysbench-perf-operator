@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import ops
 from charms.operator_libs_linux.v1.systemd import (
@@ -77,7 +77,7 @@ class SysbenchService:
                 "db_host": db.db_info.host,
                 "db_port": db.db_info.port,
                 "duration": db.duration,
-                "script": script,
+                "script_path": script,
                 "extra_labels": labels,
             },
         )
@@ -140,6 +140,7 @@ class SysbenchService:
         """Unset the sysbench service."""
         try:
             result = self.stop()
+            result ^= service_stop(self.ready_target)
             os.remove(f"/etc/systemd/system/{self.ready_target}")
             return daemon_reload() and result
         except Exception:

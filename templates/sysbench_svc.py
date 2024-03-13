@@ -12,9 +12,6 @@ import subprocess
 from prometheus_client import Gauge, start_http_server
 
 
-DEBUG = True
-
-
 class SysbenchService:
     """Sysbench service class."""
 
@@ -61,8 +58,6 @@ class SysbenchService:
     def run(self, proc, metrics, label, extra_labels):
         """Run one step of the main sysbench service loop."""
         for line in iter(proc.stdout.readline, ""):
-            if DEBUG:
-                print(line)
             value = self._process_line(line)
             if not value:
                 continue
