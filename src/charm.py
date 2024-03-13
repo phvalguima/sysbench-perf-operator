@@ -31,7 +31,6 @@ from constants import (
     COS_AGENT_RELATION,
     DATABASE_NAME,
     DATABASE_RELATION,
-    LUA_SCRIPT_PATH,
     METRICS_PORT,
     PEER_RELATION,
     SysbenchExecStatusEnum,
@@ -114,7 +113,8 @@ class SysbenchOperator(ops.CharmBase):
             # Nothing to do, there was no setup yet
             return
         svc.stop()
-        svc.render_service_file(self.labels)
+        options = SysbenchOptionsFactory(self, DATABASE_RELATION).get_execution_options()
+        svc.render_service_file(options, labels=self.labels)
         svc.run()
 
     def _on_relation_broken(self, _):
@@ -154,9 +154,7 @@ class SysbenchOperator(ops.CharmBase):
             # We need to mark this unit as prepared so we can rerun the script later
             self.sysbench_status.set(SysbenchExecStatusEnum.PREPARED)
 
-    def _execute_sysbench_cmd(
-        self, extra_labels, command: str, driver: str, script: str = LUA_SCRIPT_PATH
-    ):
+    def _execute_sysbench_cmd(self, extra_labels, command: str, driver: str):
         """Execute the sysbench command."""
         db = SysbenchOptionsFactory(self, DATABASE_RELATION).get_execution_options()
         output = subprocess.check_output(
@@ -210,7 +208,7 @@ class SysbenchOperator(ops.CharmBase):
 
         driver = self.config["driver"]
         self.unit.status = ops.model.MaintenanceStatus("Running prepare command...")
-        self._execute_sysbench_cmd(self.labels, "prepare", driver, script=self._chosen_script)
+        self._execute_sysbench_cmd(self.labels, "prepare", driver)
         SysbenchService().finished_preparing()
         self.sysbench_status.set(SysbenchExecStatusEnum.PREPARED)
         event.set_results({"status": "prepared"})
@@ -234,7 +232,8 @@ class SysbenchOperator(ops.CharmBase):
         self.unit.status = ops.model.MaintenanceStatus("Setting up benchmark")
         svc = SysbenchService()
         svc.stop()
-        svc.render_service_file(self.labels)
+        options = SysbenchOptionsFactory(self, DATABASE_RELATION).get_execution_options()
+        svc.render_service_file(options, labels=self.labels)
         svc.run()
         self.sysbench_status.set(SysbenchExecStatusEnum.RUNNING)
         event.set_results({"status": "running"})
@@ -275,7 +274,7 @@ class SysbenchOperator(ops.CharmBase):
         self.unit.status = ops.model.MaintenanceStatus("Cleaning up database")
         svc = SysbenchService()
         svc.stop()
-        self._execute_sysbench_cmd(self.labels, "clean", driver, script=self._chosen_script)
+        self._execute_sysbench_cmd(self.labels, "clean", driver)
         self.sysbench_status.set(SysbenchExecStatusEnum.UNSET)
 
     def _on_endpoints_changed(self, _) -> None:

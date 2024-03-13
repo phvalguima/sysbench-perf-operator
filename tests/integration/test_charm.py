@@ -15,26 +15,57 @@ logger = logging.getLogger(__name__)
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
 MYSQL_APP_NAME = "mysql"
+PGSQL_APP_NAME = "postgresql"
 
 
-@pytest.mark.group(1)
+DB_CHARM = {
+    "mysql": {
+        "charm": "mysql-operator",
+        "channel": "8.0/edge",
+        "config": {"profile": "testing"},
+        "app_name": MYSQL_APP_NAME,
+    },
+    "pgsql": {
+        "charm": "postgresql",
+        "channel": "14/edge",
+        "config": {},
+        "app_name": PGSQL_APP_NAME,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "db_driver",
+    [
+        (pytest.param("mysql", marks=pytest.mark.group("mysql"))),
+        (pytest.param("pgsql", marks=pytest.mark.group("postgresql"))),
+    ],
+)
 @pytest.mark.abort_on_fail
-async def test_build_and_deploy(ops_test: OpsTest) -> None:
+async def test_build_and_deploy(ops_test: OpsTest, db_driver) -> None:
     """Build the charm and deploy + 3 mysql units to ensure a cluster is formed."""
     charm = await ops_test.build_charm(".")
 
+    config = {
+        "threads": 1,
+        "tables": 1,
+        "scale": 1,
+        "driver": db_driver,
+    }
+
     await asyncio.gather(
         ops_test.model.deploy(
-            MYSQL_APP_NAME,
-            application_name=MYSQL_APP_NAME,
+            DB_CHARM[db_driver]["charm"],
+            application_name=DB_CHARM[db_driver]["app_name"],
             num_units=3,
-            channel="8.0/edge",
-            config={"profile": "testing"},
+            channel=DB_CHARM[db_driver]["channel"],
+            config=DB_CHARM[db_driver]["config"],
         ),
         ops_test.model.deploy(
             charm,
             application_name=APP_NAME,
             num_units=1,
+            config=config,
         ),
     )
 

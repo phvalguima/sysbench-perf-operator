@@ -28,3 +28,4 @@ provides:
 requires:
   database:
     interface: mysql_client
+    limit: 1

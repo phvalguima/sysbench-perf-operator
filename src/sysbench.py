@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 import subprocess
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import ops
 from charms.operator_libs_linux.v1.systemd import (
@@ -54,12 +54,18 @@ class SysbenchService:
         self.svc = svc_name
         self.ready_target = ready_target
 
-    def render_service_file(self, labels) -> bool:
+    @property
+    def svc_path(self) -> str:
+        """Returns the path to the service file."""
+        return f"/etc/systemd/system/{self.svc}.service"
+
+    def render_service_file(
+        self, db: SysbenchExecutionModel, labels: Optional[List[str]] = []
+    ) -> bool:
         """Render the systemd service file."""
-        db = SysbenchExecutionModel()
         _render(
             "sysbench.service.j2",
-            f"/etc/systemd/system/{self.svc}.service",
+            self.svc_path,
             {
                 "db_driver": "mysql",
                 "threads": db.threads,
@@ -96,21 +102,26 @@ class SysbenchService:
             shutil.copyfile(
                 f"templates/{self.ready_target}", f"/etc/systemd/system/{self.ready_target}"
             )
-            return daemon_reload()
+            return daemon_reload() and service_restart(self.ready_target)
         except Exception:
             return False
 
     def is_running(self) -> bool:
         """Checks if the sysbench service is running."""
-        return self.is_prepared() and service_running(self.svc)
+        return self.is_prepared() and os.path.exists(self.svc_path) and service_running(self.svc)
 
     def is_stopped(self) -> bool:
         """Checks if the sysbench service has stopped."""
-        return self.is_prepared() and not self.is_running() and not self.is_failed()
+        return (
+            self.is_prepared()
+            and os.path.exists(self.svc_path)
+            and not self.is_running()
+            and not self.is_failed()
+        )
 
     def is_failed(self) -> bool:
         """Checks if the sysbench service has failed."""
-        return self.is_prepared() and service_failed(self.svc)
+        return self.is_prepared() and os.path.exists(self.svc_path) and service_failed(self.svc)
 
     def run(self) -> bool:
         """Run the sysbench service."""
@@ -120,7 +131,7 @@ class SysbenchService:
 
     def stop(self) -> bool:
         """Stop the sysbench service."""
-        if not self.is_stopped() and not self.is_failed():
+        if self.is_running():
             return service_stop(self.svc)
         return self.is_stopped()
 
@@ -198,7 +209,7 @@ class SysbenchStatus:
         different data sources: this unit last status (from relation), app status and
         the current status of the sysbench service.
         """
-        if not self.app_status() or not self.unit_status():
+        if not self.app_status() or not self.unit_status() or self.charm.app.planned_units() <= 1:
             # Trivial case, the cluster does not exist. Return the service status
             return self.service_status()
 

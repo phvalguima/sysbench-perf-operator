@@ -24,8 +24,3 @@ options:
     type: string
     description: |
       The driver to be used for the test.
-  script:
-    default: "tpcc.lua"
-    type: string
-    description: |
-      The script name to be used for the test.
