@@ -4,15 +4,15 @@
 
 """This method runs the sysbench call, collects its output and forwards to prometheus."""
 
+import os
 import argparse
 import signal
 import subprocess
-import logging
 
 from prometheus_client import Gauge, start_http_server
 
 
-logger = logging.getLogger(__name__)
+DEBUG = True
 
 
 class SysbenchService:
@@ -61,6 +61,8 @@ class SysbenchService:
     def run(self, proc, metrics, label, extra_labels):
         """Run one step of the main sysbench service loop."""
         for line in iter(proc.stdout.readline, ""):
+            if DEBUG:
+                print(line)
             value = self._process_line(line)
             if not value:
                 continue
@@ -116,6 +118,11 @@ def main(args):
     signal.signal(signal.SIGCHLD, _exit)
     start_http_server(8088)
 
+    # Set LUA_PATH
+    os.environ["LUA_PATH"] = os.path.join(
+        os.path.dirname(args.tpcc_script), "?.lua"
+    )
+
     if args.command == "prepare":
         svc.prepare()
         keep_running = False  # Gracefully shutdown
@@ -128,7 +135,7 @@ def main(args):
             universal_newlines=True,
         )
         metrics = {}
-        while keep_running:
+        while keep_running and proc.poll() is None:
             svc.run(proc, metrics, f"tpcc_{args.db_driver}", args.extra_labels.split(","))
         svc.stop(proc)
     elif args.command == "clean":

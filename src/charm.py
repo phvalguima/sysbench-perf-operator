@@ -98,6 +98,11 @@ class SysbenchOperator(ops.CharmBase):
         return False
 
     @property
+    def _chosen_script(self) -> str:
+        driver = self.config["driver"]
+        return str(os.path.abspath(f"scripts/{driver}.lua"))
+
+    @property
     def _unit_ip(self) -> str:
         """Current unit ip."""
         return self.model.get_binding(COS_AGENT_RELATION).network.bind_address
@@ -157,7 +162,7 @@ class SysbenchOperator(ops.CharmBase):
         output = subprocess.check_output(
             [
                 "/usr/bin/sysbench_svc.py",
-                f"--tpcc_script={script}",
+                f"--tpcc_script={self._chosen_script}",
                 f"--db_driver={driver}",
                 f"--threads={db.threads}",
                 f"--tables={db.db_info.tables}",
@@ -203,11 +208,9 @@ class SysbenchOperator(ops.CharmBase):
         if status != SysbenchExecStatusEnum.UNSET:
             event.fail("Failed: sysbench is already prepared, stop and clean up the cluster first")
 
-        script = self.config["script"]
         driver = self.config["driver"]
-
         self.unit.status = ops.model.MaintenanceStatus("Running prepare command...")
-        self._execute_sysbench_cmd(self.labels, "prepare", driver, script=f"scripts/{script}")
+        self._execute_sysbench_cmd(self.labels, "prepare", driver, script=self._chosen_script)
         SysbenchService().finished_preparing()
         self.sysbench_status.set(SysbenchExecStatusEnum.PREPARED)
         event.set_results({"status": "prepared"})
@@ -268,13 +271,11 @@ class SysbenchOperator(ops.CharmBase):
             SysbenchService().stop()
             logger.info("Sysbench service stopped in clean action")
 
-        script = self.config["script"]
         driver = self.config["driver"]
-
         self.unit.status = ops.model.MaintenanceStatus("Cleaning up database")
         svc = SysbenchService()
         svc.stop()
-        self._execute_sysbench_cmd(self.labels, "clean", driver, script=f"scripts/{script}")
+        self._execute_sysbench_cmd(self.labels, "clean", driver, script=self._chosen_script)
         self.sysbench_status.set(SysbenchExecStatusEnum.UNSET)
 
     def _on_endpoints_changed(self, _) -> None:
