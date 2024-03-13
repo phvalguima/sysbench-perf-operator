@@ -77,7 +77,12 @@ function new_order()
 --  AND c_d_id = :d_id 
 --  AND c_id = :c_id;
 
-  con:query("BEGIN")
+  if (sysbench.opt.splittable == "yes")
+  then
+      con:query("START TRANSACTION READ WRITE")
+  else
+      con:query("BEGIN")
+  end
 
   local c_discount
   local c_last
@@ -253,7 +258,12 @@ function payment()
 --  UPDATE warehouse SET w_ytd = w_ytd + :h_amount
 --  WHERE w_id =:w_id
 
-  con:query("BEGIN")
+  if (sysbench.opt.splittable == "yes")
+  then
+      con:query("START TRANSACTION READ WRITE")
+  else
+      con:query("BEGIN")
+  end
 
   con:query(([[UPDATE warehouse%d
 	          SET w_ytd = w_ytd + %d 
@@ -302,7 +312,7 @@ function payment()
 			                   FROM customer%d
 			                  WHERE c_w_id = %d 
 			                    AND c_d_id= %d
-                                            AND c_last='%s']]):format(table_num, w_id, c_d_id, c_last ))
+                                            AND c_last='%s']]):format(table_num, c_w_id, c_d_id, c_last ))
 --		SELECT c_id
 --		FROM customer
 --		WHERE c_w_id = :c_w_id 
@@ -310,7 +320,7 @@ function payment()
 --		AND c_last = :c_last
 --		ORDER BY c_first;
 
-	if namecnt % 2 == 0 then
+	if tonumber(namecnt) >1 and namecnt % 2 == 1 then
 		namecnt = namecnt + 1
 	end
 
@@ -318,7 +328,7 @@ function payment()
 		 	    FROM customer%d
 			   WHERE c_w_id = %d AND c_d_id= %d
                              AND c_last='%s' ORDER BY c_first]]
-			):format(table_num, w_id, c_d_id, c_last ))
+			):format(table_num, c_w_id, c_d_id, c_last ))
 
 	for i = 1,  (namecnt / 2 ) + 1 do
 		row = rs:fetch_row()
@@ -348,7 +358,7 @@ function payment()
 			   WHERE c_w_id = %d 
 			     AND c_d_id= %d
 			     AND c_id=%d FOR UPDATE]])
-			 :format(table_num, w_id, c_d_id, c_id ))
+			 :format(table_num, c_w_id, c_d_id, c_id ))
 
   c_balance = tonumber(c_balance) - h_amount
   c_ytd_payment = tonumber(c_ytd_payment) + h_amount
@@ -367,7 +377,7 @@ function payment()
                                    WHERE c_w_id = %d 
                                      AND c_d_id=%d
                                      AND c_id= %d]]):
-                                  format(table_num, w_id, c_d_id, c_id ))
+                                  format(table_num, c_w_id, c_d_id, c_id ))
 
         local c_new_data=string.sub(string.format("| %4d %2d %4d %2d %4d $%7.2f %12s %24s",
                 c_id, c_d_id, c_w_id, d_id, w_id, h_amount, os.time(), c_data), 1, 500);
@@ -382,14 +392,14 @@ function payment()
                       WHERE c_w_id = %d 
                         AND c_d_id=%d
                         AND c_id=%d]])
-		  :format(table_num, c_balance, c_ytd_payment, c_new_data, w_id, c_d_id, c_id  ))
+		  :format(table_num, c_balance, c_ytd_payment, c_new_data, c_w_id, c_d_id, c_id  ))
   else
         con:query(([[UPDATE customer%d
                         SET c_balance=%f, c_ytd_payment=%f
                       WHERE c_w_id = %d 
                         AND c_d_id=%d
                         AND c_id=%d]])
-		  :format(table_num, c_balance, c_ytd_payment, w_id, c_d_id, c_id  ))
+		  :format(table_num, c_balance, c_ytd_payment, c_w_id, c_d_id, c_id  ))
 
   end
 
@@ -403,7 +413,7 @@ function payment()
   con:query(([[INSERT INTO history%d
                            (h_c_d_id, h_c_w_id, h_c_id, h_d_id,  h_w_id, h_date, h_amount, h_data)
                     VALUES (%d,%d,%d,%d,%d,NOW(),%d,'%s')]])
-            :format(table_num, c_d_id, c_w_id, c_id, d_id,  w_id, h_amount, string.format("%10s %10s    ",w_name,d_name)))
+            :format(table_num, c_d_id, c_w_id, c_id, d_id,  w_id, h_amount, string.format("%10s %10s   ",w_name,d_name)))
 
   con:query("COMMIT")
 
@@ -427,7 +437,13 @@ function orderstatus()
     local c_balance
     local c_first
     local c_middle
-    con:query("BEGIN")
+
+    if (sysbench.opt.splittable == "yes")
+    then
+        con:query("START TRANSACTION READ ONLY")
+    else
+        con:query("BEGIN")
+    end
 
     if byname == 1 then
 --    /*EXEC_SQL SELECT count(c_id)
@@ -458,7 +474,7 @@ function orderstatus()
                              AND c_last='%s' ORDER BY c_first]])
 		:format(table_num, w_id, d_id, c_last ))
 
-        if namecnt % 2 == 0 then
+        if tonumber(namecnt) >1 and namecnt % 2 == 1 then
             namecnt = namecnt + 1
         end
         for i = 1,  (namecnt / 2 ) + 1 do
@@ -552,7 +568,13 @@ function delivery()
     local w_id = sysbench.rand.uniform(1, sysbench.opt.scale)
     local o_carrier_id = sysbench.rand.uniform(1, 10)
 
-    con:query("BEGIN")
+    if (sysbench.opt.splittable == "yes")
+    then
+        con:query("START TRANSACTION READ WRITE")
+    else
+        con:query("BEGIN")
+    end
+
     for  d_id = 1, DIST_PER_WARE do
 
 --	SELECT COALESCE(MIN(no_o_id),0) INTO :no_o_id
@@ -659,7 +681,12 @@ function stocklevel()
     local d_id = sysbench.rand.uniform(1, DIST_PER_WARE)
     local level = sysbench.rand.uniform(10, 20)
 
-    con:query("BEGIN")
+    if (sysbench.opt.splittable == "yes")
+    then
+        con:query("START TRANSACTION READ ONLY")
+    else
+        con:query("BEGIN")
+    end
 
 --	/*EXEC_SQL SELECT d_next_o_id
 --	                FROM district
@@ -670,7 +697,7 @@ function stocklevel()
 --  case1 - specification
 --  case2 - modified/simplified
 
-    local stock_level_queries="case2" 
+    local stock_level_queries="case1" 
     local d_next_o_id
     
 
@@ -709,17 +736,18 @@ function stocklevel()
 
 
     else
-
     rs = con:query(([[SELECT DISTINCT ol_i_id FROM order_line%d
                WHERE ol_w_id = %d AND ol_d_id = %d
                  AND ol_o_id < %d AND ol_o_id >= %d]])
                 :format(table_num, w_id, d_id, d_next_o_id, d_next_o_id - 20 ))
 
-    local ol_i_id
+    local ol_i_id = {}
 
     for i = 1, rs.nrows do
-        ol_i_id = unpack(rs:fetch_row(), 1, rs.nfields)
+        ol_i_id[i] = unpack(rs:fetch_row(), 1, rs.nfields)
+    end
 
+    for i = 1, #ol_i_id do
 
 --       SELECT count(*) INTO :i_count
 --                      FROM stock
@@ -727,13 +755,13 @@ function stocklevel()
 --                      AND s_i_id = :ol_i_id
 --                      AND s_quantity < :level;*/
 
-        rs1 = con:query(([[SELECT count(*) FROM stock%d
+        rs = con:query(([[SELECT count(*) FROM stock%d
                    WHERE s_w_id = %d AND s_i_id = %d
                    AND s_quantity < %d]])
-                :format(table_num, w_id, ol_i_id, level ) )
+                :format(table_num, w_id, ol_i_id[i], level ) )
         local cnt
-        for i = 1, rs1.nrows do
-            cnt = unpack(rs1:fetch_row(), 1, rs1.nfields)
+        for i = 1, rs.nrows do
+            cnt = unpack(rs:fetch_row(), 1, rs.nfields)
         end
 
     end
@@ -751,7 +779,12 @@ function purge()
     local w_id = sysbench.rand.uniform(1, sysbench.opt.scale)
     local d_id = sysbench.rand.uniform(1, DIST_PER_WARE)
 
-    con:query("BEGIN")
+    if (sysbench.opt.splittable == "yes")
+    then
+        con:query("START TRANSACTION READ WRITE")
+    else
+        con:query("BEGIN")
+    end
 
         local m_o_id
         
@@ -781,8 +814,15 @@ function purge()
                             :format(table_num, w_id, d_id, del_o_id))
         con:query(([[DELETE FROM orders%d where o_w_id=%d AND o_d_id=%d and o_id=%d]])
                             :format(table_num, w_id, d_id, del_o_id))
-        con:query(([[DELETE FROM history%d where h_w_id=%d AND h_d_id=%d LIMIT 10]])
-                            :format(table_num, w_id, d_id ))
+
+        if drv:name() == "mysql" then   --Use MySQL specific SQL which allows LIMIT clause for DELETE statement
+          con:query(([[DELETE FROM history%d where h_w_id=%d AND h_d_id=%d LIMIT 10]])
+                              :format(table_num, w_id, d_id ))
+        elseif drv:name() == "pgsql" then --Use ctid to delete
+          con:query(([[DELETE FROM history%d where ctid IN (SELECT ctid FROM history%d WHERE h_w_id=%d AND h_d_id=%d LIMIT 10)]])
+                              :format(table_num,table_num, w_id, d_id ))
+        end
+
 
 	end
 

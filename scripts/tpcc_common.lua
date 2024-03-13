@@ -57,26 +57,44 @@ sysbench.cmdline.options = {
       {"Use purge transaction (yes, no)", "no"},
    report_csv =
       {"Report output in csv (yes, no)", "no"},
+   pgsql_schema =
+      {"Schema name for Pg(default:public)", "public"},
    mysql_storage_engine =
       {"Storage engine, if MySQL is used", "innodb"},
    mysql_table_options =
-      {"Extra table options, if MySQL is used. e.g. 'COLLATE latin1_bin'", ""}
+      {"Extra table options, if MySQL is used. e.g. 'COLLATE latin1_bin'", ""},
+   splittable =
+      {"Create READ WRITE or READ ONLY transactions to allow using a splitting proxy", "no"}
 }
 
 function sleep(n)
   os.execute("sleep " .. tonumber(n))
 end
 
--- Create the tables and Prepare the dataset. This command supports parallel execution, i.e. will
--- benefit from executing with --threads > 1 as long as --scale > 1
-function cmd_prepare()
+function db_connection_init()
    local drv = sysbench.sql.driver()
    local con = drv:connect()
-   local show_query="SHOW TABLES"
+
+   set_isolation_level(drv,con)
 
    if drv:name() == "mysql" then 
       con:query("SET FOREIGN_KEY_CHECKS=0")
+      con:query("SET autocommit=0")
    end
+
+   if drv:name() == "pgsql" then
+     con:query("SET search_path TO " .. sysbench.opt.pgsql_schema)
+     print ("DB SCHEMA ".. sysbench.opt.pgsql_schema)
+   end
+
+   return drv,con
+end
+
+-- Create the tables and Prepare the dataset. This command supports parallel execution, i.e. will
+-- benefit from executing with --threads > 1 as long as --scale > 1
+function cmd_prepare()
+
+   local drv,con = db_connection_init()
 
    -- create tables in parallel table per thread
    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.tables,
@@ -86,8 +104,8 @@ function cmd_prepare()
 
    -- make sure all tables are created before we load data
 
-   print("Waiting on tables 10 sec\n")
-   sleep(10)
+   print("Waiting on tables 30 sec\n")
+   sleep(30)
 
    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.scale,
    sysbench.opt.threads do
@@ -99,8 +117,8 @@ end
 -- Check consistency 
 -- benefit from executing with --threads > 1 as long as --scale > 1
 function cmd_check()
-   local drv = sysbench.sql.driver()
-   local con = drv:connect()
+
+   local drv,con = db_connection_init()
 
    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.scale,
    sysbench.opt.threads do
@@ -324,7 +342,7 @@ function create_tables(drv, con, table_num)
  
       query = string.format([[(%d,%d,'%s',%f,'%s')]],
 	j, i_im_id, i_name:sub(1,24), i_price, i_data:sub(1,50))
-      con:bulk_insert_next(query)
+        con:bulk_insert_next(query)
 		 
    end
    con:bulk_insert_done()
@@ -349,7 +367,6 @@ function create_tables(drv, con, table_num)
         con:query("ALTER TABLE stock"..i.." ADD CONSTRAINT fkey_stock_1_"..table_num.." FOREIGN KEY(s_w_id) REFERENCES warehouse"..i.."(w_id)")
         con:query("ALTER TABLE stock"..i.." ADD CONSTRAINT fkey_stock_2_"..table_num.." FOREIGN KEY(s_i_id) REFERENCES item"..i.."(i_id)")
     end
-
 end
 
 
@@ -392,11 +409,18 @@ function load_tables(drv, con, warehouse_num)
    local extra_table_options = ""
    local query
 
-   set_isolation_level(drv,con)
-   
+
    -- print(string.format("Creating warehouse: %d\n", warehouse_num))
+   if drv:name() == "mysql"
+   then
+   	con:query("SET SESSION autocommit=1")
+	-- con:query("SET SESSION sql_log_bin = 0")
+   	-- con:query("SET @trx = (SELECT @@global.innodb_flush_log_at_trx_commit)")
+   	-- con:query("SET GLOBAL innodb_flush_log_at_trx_commit=0")
+   end
 
    for table_num = 1, sysbench.opt.tables do 
+	  --con:query("SET autocommit=1")
 
    print(string.format("loading tables: %d for warehouse: %d\n", table_num, warehouse_num))
 
@@ -407,8 +431,8 @@ function load_tables(drv, con, warehouse_num)
 	warehouse_num, sysbench.rand.string("name-@@@@@"), sysbench.rand.string("street1-@@@@@@@@@@"),
         sysbench.rand.string("street2-@@@@@@@@@@"), sysbench.rand.string("city-@@@@@@@@@@"),
         sysbench.rand.string("@@"),sysbench.rand.string("zip-#####"),sysbench.rand.uniform_double()*0.2 )
-      con:bulk_insert_next(query)
-		 
+
+    con:bulk_insert_next(query)
     con:bulk_insert_done()
 
     con:bulk_insert_init("INSERT INTO district" .. table_num .. 
@@ -423,7 +447,7 @@ function load_tables(drv, con, warehouse_num)
       con:bulk_insert_next(query)
 
    end
- con:bulk_insert_done()
+   con:bulk_insert_done()
 
 -- CUSTOMER TABLE
 
@@ -568,26 +592,22 @@ function load_tables(drv, con, warehouse_num)
 
   end
 
+   if drv:name() == "mysql"
+   then
+--   	con:query("SET @trx = (SELECT @@global.innodb_flush_log_at_trx_commit=0)")
+--   	con:query("SET GLOBAL innodb_flush_log_at_trx_commit=@trx")
+   end
+
 end
 
-function thread_init()
-   drv = sysbench.sql.driver()
-   con = drv:connect()
-   con:query("SET AUTOCOMMIT=0")
-
-end
 
 function thread_done()
    con:disconnect()
 end
 
 function cleanup()
-   local drv = sysbench.sql.driver()
-   local con = drv:connect()
 
-   if drv:name() == "mysql" then 
-      con:query("SET FOREIGN_KEY_CHECKS=0")
-   end
+   local drv,con = db_connection_init()
 
    for i = 1, sysbench.opt.tables do
       print(string.format("Dropping tables '%d'...", i))
@@ -639,7 +659,10 @@ function NURand (A, x, y)
 	end
 
 	-- return ((( sysbench.rand.uniform(0, A) | sysbench.rand.uniform(x, y)) + C) % (y-x+1)) + x;
-	return ((( bit.bor(sysbench.rand.uniform(0, A), sysbench.rand.uniform(x, y))) + C) % (y-x+1)) + x;
+	local i = sysbench.rand.uniform(0, A)
+	local j = sysbench.rand.uniform(x, y)
+
+	return ((( bit.bor(i, j) ) + C) % (y-x+1)) + x;
 end
 
 -- vim:ts=4 ss=4 sw=4 expandtab

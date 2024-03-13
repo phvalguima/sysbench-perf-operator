@@ -142,6 +142,7 @@ class SysbenchService:
             result = self.stop()
             result ^= service_stop(self.ready_target)
             os.remove(f"/etc/systemd/system/{self.ready_target}")
+            os.remove(self.svc_path)
             return daemon_reload() and result
         except Exception:
             pass

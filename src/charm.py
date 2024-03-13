@@ -51,6 +51,7 @@ class SysbenchOperator(ops.CharmBase):
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.prepare_action, self.on_prepare_action)
         self.framework.observe(self.on.run_action, self.on_run_action)
+        self.framework.observe(self.on.stop_action, self.on_stop_action)
         self.framework.observe(self.on.clean_action, self.on_clean_action)
 
         self.framework.observe(self.on[PEER_RELATION].relation_joined, self._on_peer_changed)
@@ -238,7 +239,7 @@ class SysbenchOperator(ops.CharmBase):
         self.sysbench_status.set(SysbenchExecStatusEnum.RUNNING)
         event.set_results({"status": "running"})
 
-    def on_benchmark_stop_action(self, event):
+    def on_stop_action(self, event):
         """Stop benchmark service."""
         if not (status := self.check()):
             event.fail(
