@@ -4,13 +4,13 @@
 
 import asyncio
 import logging
-from pathlib import Path
-
 import subprocess
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 import yaml
 from pytest_operator.plugin import OpsTest
-from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
@@ -39,16 +39,7 @@ DB_CHARM = {
 
 def check_service(svc_name):
     return subprocess.check_output(
-        [
-            "juju",
-            "ssh",
-            f"{APP_NAME}/0",
-            "--",
-            "sudo",
-            "systemctl",
-            "is-active",
-            svc_name
-        ],
+        ["juju", "ssh", f"{APP_NAME}/0", "--", "sudo", "systemctl", "is-active", svc_name],
         text=True,
     )
 
@@ -137,10 +128,7 @@ async def test_prepare_action(ops_test: OpsTest, db_driver) -> None:
     )
     svc_output = check_service("sysbench_prepared.target")
     # Looks silly, but we "active" is in "inactive" string :(
-    assert (
-        "inactive" not in svc_output
-        and "active" in svc_output
-    )
+    assert "inactive" not in svc_output and "active" in svc_output
 
 
 @pytest.mark.parametrize(
@@ -158,10 +146,7 @@ async def test_run_action(ops_test: OpsTest, db_driver) -> None:
 
     svc_output = check_service("sysbench.service")
     # Looks silly, but we "active" is in "inactive" string :(
-    assert (
-        "inactive" not in svc_output
-        and "active" in svc_output
-    )
+    assert "inactive" not in svc_output and "active" in svc_output
     # Wait until it is finished, and retry
     await asyncio.sleep(3 * DURATION)
     try:
