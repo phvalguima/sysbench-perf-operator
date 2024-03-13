@@ -20,7 +20,7 @@ PGSQL_APP_NAME = "postgresql"
 
 DB_CHARM = {
     "mysql": {
-        "charm": "mysql-operator",
+        "charm": "mysql",
         "channel": "8.0/edge",
         "config": {"profile": "testing"},
         "app_name": MYSQL_APP_NAME,

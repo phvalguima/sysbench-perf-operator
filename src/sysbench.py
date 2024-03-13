@@ -60,7 +60,7 @@ class SysbenchService:
         return f"/etc/systemd/system/{self.svc}.service"
 
     def render_service_file(
-        self, db: SysbenchExecutionModel, labels: Optional[List[str]] = []
+        self, script: str, db: SysbenchExecutionModel, labels: Optional[str] = ""
     ) -> bool:
         """Render the systemd service file."""
         _render(
@@ -77,6 +77,7 @@ class SysbenchService:
                 "db_host": db.db_info.host,
                 "db_port": db.db_info.port,
                 "duration": db.duration,
+                "script": script,
                 "extra_labels": labels,
             },
         )

@@ -85,7 +85,7 @@ class SysbenchOperator(ops.CharmBase):
         if status == SysbenchExecStatusEnum.RUNNING:
             self.unit.status = ops.model.ActiveStatus("Sysbench is running")
         if status == SysbenchExecStatusEnum.STOPPED:
-            self.unit.status = ops.model.WaitingStatus("User requested sysbench run to halt")
+            self.unit.status = ops.model.BlockedStatus("Sysbench is stopped after run")
 
     def __del__(self):
         """Set status for the operator and finishes the service."""
@@ -114,7 +114,7 @@ class SysbenchOperator(ops.CharmBase):
             return
         svc.stop()
         options = SysbenchOptionsFactory(self, DATABASE_RELATION).get_execution_options()
-        svc.render_service_file(options, labels=self.labels)
+        svc.render_service_file(self._chosen_script, options, labels=self.labels)
         svc.run()
 
     def _on_relation_broken(self, _):
@@ -233,7 +233,7 @@ class SysbenchOperator(ops.CharmBase):
         svc = SysbenchService()
         svc.stop()
         options = SysbenchOptionsFactory(self, DATABASE_RELATION).get_execution_options()
-        svc.render_service_file(options, labels=self.labels)
+        svc.render_service_file(self._chosen_script, options, labels=self.labels)
         svc.run()
         self.sysbench_status.set(SysbenchExecStatusEnum.RUNNING)
         event.set_results({"status": "running"})
